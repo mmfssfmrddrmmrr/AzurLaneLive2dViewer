@@ -1,0 +1,27 @@
+{
+  "name": "jstest",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsc && node ./dist/main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "node-luajit-decompiler-v2": "^1.0.7",
+    "texture2ddecoder-wasm": "^1.2.6",
+    "unityfs-js": "^0.2.9"
+  },
+  "allowScripts": {
+    "node-luajit-decompiler-v2@1.0.7": true
+  }
+}

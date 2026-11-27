@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1" />
+  <title>Live2D 模型预览器</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #171923;
+      color: white;
+    }
+
+    #viewer {
+      position: absolute;
+      inset: 0 260px 0 0;
+      overflow: hidden;
+      cursor: grab;
+      background: radial-gradient(
+        circle, #40465c, #171923
+      );
+    }
+
+    #viewer:active { cursor: grabbing; }
+
+    #panel {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 260px;
+      padding: 20px;
+      background: #252938;
+      overflow-y: auto;
+    }
+    #mouseFollow, #motionLoop {
+      width: auto;
+      margin-right: 8px;
+      cursor: pointer;
+    }
+    h2 { font-size: 20px; }
+
+    label {
+      display: block;
+      margin: 18px 0 8px;
+      font-size: 13px;
+      color: #c9c9d5;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 10px;
+      border: 0;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+
+    input, select {
+      background: #383e51;
+      color: white;
+    }
+
+    button {
+      background: #667eea;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover { background: #7b8dff; }
+
+    #status {
+      font-size: 12px;
+      line-height: 1.6;
+      overflow-wrap: anywhere;
+      color: #b6bdd2;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="viewer"></div>
+
+  <aside id="panel">
+    <h2>Live2D Preview</h2>
+
+    <label>模型路径</label>
+    <input id="modelUrl"
+      value="" />
+    <button id="loadBtn">加载模型</button>
+
+    <label for="skinSelect">从服务器选择 Live2D 皮肤</label>
+    <select id="skinSelect">
+      <option value="">正在加载皮肤列表...</option>
+    </select>
+    <button id="downloadSkinBtn">下载并加载皮肤</button>
+    
+    <label>模型缩放</label>
+    <input id="scale" type="range"
+      min="0.1" step="0.01" value="1" />
+    <label>
+      <input
+        type="checkbox"
+        id="mouseFollow"
+        checked
+      />
+      鼠标跟随
+    </label>
+    <label>
+      <input type="checkbox" id="motionLoop" />
+      循环播放
+    </label>
+    <label>动作组</label>
+    <select id="motionGroup"></select>
+    <button id="playBtn">播放动作</button>
+
+    <button id="resetBtn">重置</button>
+
+    <p id="status">等待加载模型</p>
+  </aside>
+
+  <!-- Cubism 4 Core -->
+  <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+
+  <!-- PixiJS 6 -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js"></script>
+
+  <!-- Live2D 插件 -->
+  <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js"></script>
+
+  <script>
+    const viewer = document.getElementById("viewer");
+    const status = document.getElementById("status");
+    const scaleInput = document.getElementById("scale");
+    const groupSelect = document.getElementById("motionGroup");
+    const loopCheckbox = document.getElementById("motionLoop");
+    const app = new PIXI.Application({
+      resizeTo: viewer,
+      backgroundAlpha: 0,
+      antialias: true,
+      autoDensity: true,
+      resolution: window.devicePixelRatio || 1
+    });
+    
+    viewer.appendChild(app.view);
+
+    let model = null;
+    let baseScale = 1;
+    let loading = false;
+    let currentMotionGroup = null;
+    let currentMotion = null;
+
+    const { Live2DModel } = PIXI.live2d;
+
+    function setStatus(message) {
+      status.textContent = message;
+    }
+
+    function fitModel() {
+      if (!model) return;
+
+      // 模型原始宽高
+      const width = model.internalModel.width;
+      const height = model.internalModel.height;
+
+      baseScale = Math.min(
+        app.screen.width * 0.75 / width,
+        app.screen.height * 0.85 / height
+      );
+
+      model.anchor.set(0.5, 0.5);
+      model.position.set(
+        app.screen.width / 2,
+        app.screen.height / 2
+      );
+
+      scaleInput.value = "1";
+      model.scale.set(baseScale);
+    }
+
+    async function loadModel(url) {
+      if (loading) return;
+
+      loading = true;
+      document.getElementById("loadBtn").disabled = true;
+      setStatus("正在加载模型...");
+
+      try {
+        const nextModel = await Live2DModel.from(url);
+
+        if (model) {
+          app.stage.removeChild(model);
+          model.destroy();
+        }
+
+        model = nextModel;
+        app.stage.addChild(model);
+
+        currentMotionGroup = null;
+        currentMotion = null;
+
+        fitModel();
+        updateMotionGroups();
+
+        model.on("hit", (areas) => {
+          setStatus("点击区域：" + areas.join(", "));
+        });
+
+        setStatus("模型加载成功");
+      } catch (error) {
+        console.error(error);
+        setStatus("加载失败：" + error.message);
+      } finally {
+        loading = false;
+        document.getElementById("loadBtn").disabled = false;
+      }
+    }
+
+    async function loadSkinList() {
+      const skinSelect = document.getElementById("skinSelect");
+      try {
+        const response = await fetch("/api/skins");
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || `HTTP ${response.status}`);
+        }
+
+        skinSelect.innerHTML = "";
+        for (const skin of result) {
+          const option = document.createElement("option");
+          option.value = skin.id;
+          option.textContent = `${skin.ship_name} - ${skin.name} (${skin.id})`;
+          skinSelect.appendChild(option);
+        }
+
+        if (result.length === 0) {
+          skinSelect.add(new Option("没有找到 Live2D 皮肤", ""));
+        }
+      } catch (error) {
+        console.error(error);
+        skinSelect.innerHTML = "";
+        skinSelect.add(new Option("皮肤列表加载失败", ""));
+        setStatus("获取皮肤列表失败：" + error.message);
+      }
+    }
+
+    function updateMotionGroups() {
+      groupSelect.innerHTML = "";
+      if (!model) return;
+
+      const groups = model.internalModel.motionManager.definitions;
+      const compareMotionGroups = (a, b) => {
+        const aMatch = a.match(/^(.*?)(\d+)$/);
+        const bMatch = b.match(/^(.*?)(\d+)$/);
+        const aBase = aMatch ? aMatch[1] : a;
+        const bBase = bMatch ? bMatch[1] : b;
+        const baseOrder = aBase.localeCompare(bBase, "zh-CN", { sensitivity: "base" });
+        if (baseOrder !== 0) return baseOrder;
+
+        if (aMatch && bMatch) {
+          const numberOrder = Number(aMatch[2]) - Number(bMatch[2]);
+          if (numberOrder !== 0) return numberOrder;
+        } else if (aMatch || bMatch) {
+          return aMatch ? 1 : -1;
+        }
+
+        return a.localeCompare(b, "zh-CN");
+      };
+
+      for (const group of Object.keys(groups || {}).sort(compareMotionGroups)) {
+        const option = document.createElement("option");
+        option.value = group;
+        option.textContent = group;
+        groupSelect.appendChild(option);
+      }
+    }
+
+    document.getElementById("loadBtn").onclick = () => {
+      loadModel(
+        document.getElementById("modelUrl").value.trim()
+      );
+    };
+
+    document.getElementById("downloadSkinBtn").onclick = async () => {
+      const skinId = document.getElementById("skinSelect").value;
+      if (!skinId) {
+        setStatus("请先选择一个 Live2D 皮肤");
+        return;
+      }
+
+      const button = document.getElementById("downloadSkinBtn");
+      button.disabled = true;
+      setStatus("正在下载并解码皮肤...");
+      try {
+        const response = await fetch(
+          `/api/skins/${encodeURIComponent(skinId)}/download`,
+          { method: "POST" }
+        );
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || `HTTP ${response.status}`);
+        }
+
+        const modelUrl = new URL(result.modelUrl, window.location.origin).href;
+        document.getElementById("modelUrl").value = modelUrl;
+        await loadModel(modelUrl);
+      } catch (error) {
+        console.error(error);
+        setStatus("下载或解码失败：" + error.message);
+      } finally {
+        button.disabled = false;
+      }
+    };
+
+    document.getElementById("playBtn").onclick = async () => {
+      if (!model || !groupSelect.value) return;
+
+      const mm = model.internalModel.motionManager;
+      const group = groupSelect.value;
+      mm.stopAllMotions();
+      currentMotionGroup = group;
+      currentMotion = null;
+
+      const motion = await mm.loadMotion(group, 0);
+      if (!motion || !model || model.internalModel.motionManager !== mm || currentMotionGroup !== group) {
+        if (currentMotionGroup === group) {
+          setStatus(`加载动作失败：${group}`);
+        }
+        return false;
+      }
+      currentMotion = motion;
+      motion.setIsLoop(loopCheckbox.checked);
+      motion.setIsLoopFadeIn(false);
+      return mm.startMotion(group, 0);
+    };
+
+    loopCheckbox.addEventListener("change", () => {
+      if (currentMotion) {
+        currentMotion.setIsLoop(loopCheckbox.checked);
+      }
+    });
+
+    scaleInput.oninput = () => {
+      if (!model) return;
+      model.scale.set(baseScale * Number(scaleInput.value));
+    };
+
+    document.getElementById("resetBtn").onclick = async () => {
+      const url = document.getElementById("modelUrl").value.trim();
+
+      if (!url) return;
+
+      await loadModel(url);
+
+      setStatus("模型已重置");
+    };
+
+    // 拖拽移动
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    app.view.addEventListener("pointerdown", (e) => {
+      if (!model) return;
+
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      app.view.setPointerCapture(e.pointerId);
+    });
+
+    app.view.addEventListener("pointermove", (e) => {
+      if (!dragging || !model) return;
+
+      const rect = app.view.getBoundingClientRect();
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+
+      model.x += dx * app.screen.width / rect.width;
+      model.y += dy * app.screen.height / rect.height;
+
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+    const mouseFollow = document.getElementById("mouseFollow");
+
+    // 鼠标跟随状态
+    let enableMouseFollow = true;
+
+    // 鼠标移动事件
+    app.view.addEventListener("pointermove", (e) => {
+      if (!model || !enableMouseFollow) return;
+
+      const rect = app.view.getBoundingClientRect();
+
+      // 转换为 PixiJS 画布坐标
+      const x =
+        (e.clientX - rect.left) *
+        app.screen.width / rect.width;
+
+      const y =
+        (e.clientY - rect.top) *
+        app.screen.height / rect.height;
+
+      // 让模型注视鼠标位置
+      model.focus(x, y);
+    });
+
+    // 开关事件
+    mouseFollow.addEventListener("change", (e) => {
+      enableMouseFollow = e.target.checked;
+
+      if (!model) return;
+
+      if (!enableMouseFollow) {
+        // 停止跟随并让视线逐渐回到正前方
+        model.internalModel.focusController.focus(0, 0);
+      }
+    });
+    app.view.addEventListener("pointerup", () => {
+      dragging = false;
+    });
+
+    app.view.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+
+    const maxScale = 20;
+    scaleInput.max = maxScale;
+    // 滚轮缩放
+    app.view.addEventListener("wheel", (e) => {
+      if (!model) return;
+      e.preventDefault();
+
+      // 1. 获取鼠标在 PixiJS 画布中的坐标
+      const rect = app.view.getBoundingClientRect();
+
+      const mouseX =
+        (e.clientX - rect.left) *
+        app.screen.width / rect.width;
+
+      const mouseY =
+        (e.clientY - rect.top) *
+        app.screen.height / rect.height;
+
+      // 2. 缩放前，记录鼠标对应的模型局部坐标
+      const mousePoint = new PIXI.Point(mouseX, mouseY);
+      const localPoint = model.toLocal(mousePoint);
+
+      // 3. 计算新的缩放比例
+      const factor = e.deltaY > 0 ? 0.9 : 1.1;
+
+      const nextScale = Math.max(
+        0.1,
+        Math.min(
+          maxScale,
+          Number(scaleInput.value) * factor
+        )
+      );
+
+      scaleInput.value = nextScale;
+
+      // 4. 执行缩放
+      model.scale.set(baseScale * nextScale);
+
+      // 5. 计算缩放后原鼠标位置对应的画布坐标
+      const newPoint = model.toGlobal(localPoint);
+
+      // 6. 调整模型位置，抵消缩放产生的偏移
+      model.x += mouseX - newPoint.x;
+      model.y += mouseY - newPoint.y;
+    }, { passive: false });
+
+    // 页面初始化
+    loadModel(
+      document.getElementById("modelUrl").value
+    );
+    loadSkinList();
+  </script>
+</body>
+</html>
