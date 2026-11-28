@@ -90,10 +90,13 @@ export class Live2dManager {
     }
 
     const outputDir = join(MODEL_ROOT, String(skin.id));
-    let modelFile = (await readdir(outputDir, {withFileTypes: true}))
-      .filter((e)=>e.isFile() && e.name.endsWith(".model3.json"))
-      [0]?.name 
-      ?? ""
+    let modelFile;
+    try {
+        modelFile = (await readdir(outputDir, {withFileTypes: true}))
+        .filter((e)=>e.isFile() && e.name.endsWith(".model3.json"))
+        [0]?.name 
+        ?? ""
+    } catch (e) {if((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;}
     if (modelFile) {
       console.log(`Using cached Live2D model for skin ${skin.id}.`);
     } else {
