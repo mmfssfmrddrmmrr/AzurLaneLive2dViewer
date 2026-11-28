@@ -190,7 +190,7 @@
       setStatus("正在加载模型...");
 
       try {
-        const nextModel = await Live2DModel.from(url);
+        const nextModel = await Live2DModel.from(url, {autoInteract: false});
 
         if (model) {
           app.stage.removeChild(model);

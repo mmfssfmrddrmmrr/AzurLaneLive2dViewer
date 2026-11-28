@@ -9,7 +9,7 @@
     "hashes-manga.json",
     "hashes-cipher.json"
   ],
-  "line_index": 3,
+  "all_lines": [3, 1, 4],
   "base_hash_url": "https://line{}-patch-blhx.bilibiligame.net/android/hash/",
   "base_resource_url": "https://line{}-patch-blhx.bilibiligame.net/android/resource/",
   "white_hash_names": [

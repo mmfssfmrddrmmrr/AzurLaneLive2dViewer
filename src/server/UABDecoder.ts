@@ -21,13 +21,6 @@ class FByteArray {
   }
 }
 
-/** 模拟 NewSpecific：分配指定元素个数的数组（元素大小由调用方决定） */
-function newSpecific(elementSize: number, n: number): FByteArray {
-  // 原 C++ 分配 n*elementSize + 16 字节，数据从偏移 16 开始
-  // TS 中直接用 n*elementSize 长度的 Uint8Array，等价于数据区
-  return new FByteArray(n * elementSize);
-}
-
 /** 从 Uint8Array 读取 32 位小端无符号整数 */
 function readU32LE(data: Uint8Array, offset: number): number {
   return (data[offset]! | (data[offset + 1]! << 8) | (data[offset + 2]! << 16) | (data[offset + 3]! << 24)) >>> 0;
